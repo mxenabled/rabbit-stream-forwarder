@@ -1,0 +1,5 @@
+rabbit-stream-forwarder
+vendor/*
+.envrc
+pkg/
+.DS_Store
