@@ -12,57 +12,40 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 
 	"github.com/cactus/go-statsd-client/v5/statsd"
 	"github.com/streadway/amqp"
 )
 
 var (
-	trackedOffset int64
+	amqpUri           = flag.String("amqp-uri", "amqp://guest:guest@localhost:5672", "uri to connect to")
+	streamName        = flag.String("stream-name", "", "stream name to forward")
+	exchange          = flag.String("exchange", "events", "name of exchange to forward messages to")
+	offset            = flag.String("offset", "last", "offset to start from, valid values are last, first, exact offset (digits)")
+	manageOffset      = flag.Bool("manage-offset", false, "if true, manually tracks offset and stores in file")
+	offsetFilePath    = flag.String("offset-file-path", "/tmp/stream-forwarder-offset", "file used to manage offset with the manage-offset flag")
+	publishChannelQty = flag.Int("publish-channel-qty", 1, "amount of channels to open and utilize for publishing")
+	debug             = flag.Bool("debug", false, "if set to true will enable more verbose logging")
+
+	tlsCaFile         = flag.String("tls-client-ca-file", "", "client ca file path")
+	tlsClientCertFile = flag.String("tls-client-cert-file", "", "client certificate file path")
+	tlsClientKeyFile  = flag.String("tls-client-key-file", "", "client key file path")
+
+	useStatsd = flag.Bool("use-statsd", false, "set to true to push offset status to statsd")
+	statsdUri = flag.String("statsd-uri", "127.0.0.1:8125", "uri to use for statsd client")
 )
 
-func createAmqpConn(uri, caFile, clientCertFile, clientKeyFile string) (*amqp.Connection, error) {
-	if caFile != "" {
-		tlsConfig, err := generateRabbitTLSConfig(
-			caFile,
-			clientCertFile,
-			clientKeyFile,
-		)
-		if err != nil {
-			return nil, err
-		}
-		return amqp.DialTLS(uri, tlsConfig)
-	} else {
-		return amqp.Dial(uri)
-	}
+func init() {
+	flag.Parse()
 }
 
 func main() {
-	var (
-		amqpUri           = flag.String("amqp-uri", "amqp://guest:guest@localhost:5672", "uri to connect to")
-		streamName        = flag.String("stream-name", "", "stream name to forward")
-		exchange          = flag.String("exchange", "events", "name of exchange to forward messages to")
-		offset            = flag.String("offset", "last", "offset to start from, valid values are last, first, exact offset (digits)")
-		manageOffset      = flag.Bool("manage-offset", false, "if true, manually tracks offset and stores in file")
-		offsetFilePath    = flag.String("offset-file-path", "/tmp/stream-forwarder-offset", "file used to manage offset with the manage-offset flag")
-		publishChannelQty = flag.Int("publish-channel-qty", 1, "amount of channels to open and utilize for publishing") // maybe connection qty as well
-		debug             = flag.Bool("debug", false, "if set to true will enable more verbose logging")
-
-		tlsCaFile         = flag.String("tls-client-ca-file", "", "client ca file path")
-		tlsClientCertFile = flag.String("tls-client-cert-file", "", "client certificate file path")
-		tlsClientKeyFile  = flag.String("tls-client-key-file", "", "client key file path")
-
-		useStatsd = flag.Bool("use-statsd", false, "set to true to push offset status to statsd")
-		statsdUri = flag.String("statsd-uri", "127.0.0.1:8125", "uri to use for statsd client")
-	)
-	flag.Parse()
+	var trackedOffset int64
 	if *streamName == "" {
 		log.Fatal("Stream name must be specified! Shutting down..")
 	}
 
 	var st statsdTracker
-
 	if *useStatsd {
 		config := &statsd.ClientConfig{
 			Address: *statsdUri,
@@ -113,7 +96,7 @@ func main() {
 		true,
 		false,
 		false,
-		map[string]interface{}{"x-stream-offset": evaluatedOffset},
+		amqp.Table{"x-stream-offset": evaluatedOffset},
 	)
 	if err != nil {
 		log.Fatal(err)
@@ -134,7 +117,7 @@ func main() {
 	// If we panic for any reason, we need to make sure we still commit offset
 	defer func() {
 		if r := recover(); r != nil {
-			commitOffset(*offsetFilePath, trackedOffset)
+			writeOffset(*offsetFilePath, trackedOffset)
 			fmt.Println(err)
 		}
 	}()
@@ -151,17 +134,6 @@ func main() {
 				fmt.Printf("Error extracting offset.. %s\n", err.Error())
 			}
 			msg.Ack(false)
-
-			msgsSinceCommit += 1
-			if msgsSinceCommit >= 1000 {
-				if *manageOffset {
-					commitOffset(*offsetFilePath, trackedOffset)
-				}
-				msgsSinceCommit = 0
-				if *useStatsd {
-					st.Inc(trackedOffset)
-				}
-			}
 		}
 	}()
 
@@ -174,6 +146,16 @@ func main() {
 				if err != nil {
 					fmt.Printf("Error forwarding delivery: %s\n", err.Error())
 				}
+				msgsSinceCommit += 1
+				if msgsSinceCommit >= 1000 {
+					if *manageOffset {
+						writeOffset(*offsetFilePath, trackedOffset)
+					}
+					msgsSinceCommit = 0
+					if *useStatsd {
+						st.Inc(trackedOffset)
+					}
+				}
 			}
 		}(ch)
 	}
@@ -183,11 +165,27 @@ func main() {
 	<-c
 	if *manageOffset {
 		fmt.Println("Writing offset to file...")
-		commitOffset(*offsetFilePath, trackedOffset)
+		writeOffset(*offsetFilePath, trackedOffset)
 	}
 	if *useStatsd {
 		fmt.Println("Writing offset to statsd...")
 		st.Inc(trackedOffset)
+	}
+}
+
+func createAmqpConn(uri, caFile, clientCertFile, clientKeyFile string) (*amqp.Connection, error) {
+	if caFile != "" {
+		tlsConfig, err := generateRabbitTLSConfig(
+			caFile,
+			clientCertFile,
+			clientKeyFile,
+		)
+		if err != nil {
+			return nil, err
+		}
+		return amqp.DialTLS(uri, tlsConfig)
+	} else {
+		return amqp.Dial(uri)
 	}
 }
 
@@ -233,28 +231,19 @@ func getOffset(filePath string) (interface{}, error) {
 	} else {
 		i, err := strconv.Atoi(stringContent)
 		if err != nil {
-			log.Fatalf("Invalid value found in offset file: %s\n")
+			log.Fatalf("Invalid value found in offset file: %s\n", stringContent)
 		}
 		return i, nil
 	}
-
-	return strings.TrimSuffix(string(content), "\n"), nil
 }
 
-func commitOffset(filePath string, offset int64) {
+func writeOffset(filePath string, offset int64) {
 	fmt.Printf("Committing offset %d to offset file...\n", offset)
-	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	content := fmt.Sprintf("%d", offset)
+	err := ioutil.WriteFile(filePath, []byte(content), 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
-	_, err = fmt.Fprintf(f, "%d", offset)
-	if err != nil {
-		log.Fatal("Error writing offset:", err)
-	}
-	if err := f.Close(); err != nil {
-		log.Fatal(err)
-	}
-	f.Close()
 }
 
 func printDelivery(msg amqp.Delivery) {
