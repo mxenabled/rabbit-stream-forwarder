@@ -4,7 +4,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"math/rand"
 	"os"
@@ -18,9 +17,11 @@ import (
 var (
 	amqpUri           = flag.String("amqp-uri", "amqp://guest:guest@localhost:5672", "uri to connect to")
 	streamName        = flag.String("stream-name", "", "stream name to forward")
+	consumerName      = flag.String("consumer-name", "", "name to use on consuming functions in rabbit")
 	exchange          = flag.String("exchange", "events", "name of exchange to forward messages to")
 	offset            = flag.String("offset", "last", "offset to start from, valid values are last, first, exact offset (digits)")
 	manageOffset      = flag.Bool("manage-offset", false, "if true, manually tracks offset and stores in file")
+	offsetManagerType = flag.String("offset-manager-type", "rabbit", "type of offset manager to use, valid values are file, rabbit, none")
 	offsetFilePath    = flag.String("offset-file-path", "/tmp/stream-forwarder-offset", "file used to manage offset with the manage-offset flag")
 	publishChannelQty = flag.Int("publish-channel-qty", 1, "amount of channels to open and utilize for publishing")
 	debug             = flag.Bool("debug", false, "if set to true will enable more verbose logging")
@@ -33,12 +34,11 @@ var (
 	statsdUri = flag.String("statsd-uri", "127.0.0.1:8125", "uri to use for statsd client")
 )
 
-func init() {
-	flag.Parse()
-}
-
 func main() {
+	flag.Parse()
 	var trackedOffset int64
+	var offsetManager OffsetManager
+
 	if *streamName == "" {
 		log.Fatal("Stream name must be specified! Shutting down..")
 	}
@@ -70,15 +70,46 @@ func main() {
 	}
 	defer ch.Close()
 
+	if *manageOffset {
+		switch *offsetManagerType {
+		case "rabbit":
+			rom, err := NewRabbitOffsetManager(
+				pubConn,
+				*consumerName,
+				*streamName,
+			)
+			if err != nil {
+				log.Fatal(err)
+			}
+			offsetManager = rom
+		case "file":
+			fom, err := NewFileOffsetManager(*offsetFilePath)
+			if err != nil {
+				log.Fatal(err)
+			}
+			offsetManager = fom
+		case "none":
+			offsetManager = NewDevNullOffsetManager()
+		default:
+			log.Fatal("Manage offset was specified without a valid offset-manager value")
+		}
+	}
+
 	var evaluatedOffset interface{}
 	if *manageOffset {
-		evaluatedOffset, err = getOffset(*offsetFilePath)
-		if err != nil {
+		evaluatedOffset, err = offsetManager.GetOffset()
+		switch err {
+		case ErrFirstRunUserMustSpecifyOffset:
+			evaluatedOffset = "first"
+		case nil:
+		default:
 			log.Fatal(err)
 		}
 	} else {
 		evaluatedOffset = *offset
 	}
+	fmt.Println("Evaluated Offset")
+	fmt.Println(evaluatedOffset)
 
 	fmt.Printf("Consuming from stream %s and forwarding to exchange %s\n", *streamName, *exchange)
 	err = ch.Qos(1, 0, false)
@@ -115,7 +146,7 @@ func main() {
 	// If we panic for any reason, we need to make sure we still commit offset
 	defer func() {
 		if r := recover(); r != nil {
-			writeOffset(*offsetFilePath, trackedOffset)
+			offsetManager.WriteOffset(trackedOffset)
 			fmt.Println(err)
 		}
 	}()
@@ -147,7 +178,10 @@ func main() {
 				msgsSinceCommit += 1
 				if msgsSinceCommit >= 1000 {
 					if *manageOffset {
-						writeOffset(*offsetFilePath, trackedOffset)
+						err := offsetManager.WriteOffset(trackedOffset)
+						if err != nil {
+							log.Fatal("Error writing offset: ", err)
+						}
 					}
 					msgsSinceCommit = 0
 					if *useStatsd {
@@ -163,7 +197,10 @@ func main() {
 	<-c
 	if *manageOffset {
 		fmt.Println("Writing offset to file...")
-		writeOffset(*offsetFilePath, trackedOffset)
+		err := offsetManager.WriteOffset(trackedOffset)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 	if *useStatsd {
 		fmt.Println("Writing offset to statsd...")
@@ -208,40 +245,6 @@ func forwardDelivery(ch *amqp.Channel, msg amqp.Delivery, exchange string, debug
 		return err
 	}
 	return nil
-}
-
-func getOffset(filePath string) (interface{}, error) {
-	fmt.Println("Fetching offset file...")
-	f, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return "", err
-	}
-	f.Close()
-
-	content, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		return "", err
-	}
-
-	stringContent := string(content)
-	if stringContent == "" {
-		return "last", nil
-	} else {
-		i, err := strconv.Atoi(stringContent)
-		if err != nil {
-			log.Fatalf("Invalid value found in offset file: %s\n", stringContent)
-		}
-		return i, nil
-	}
-}
-
-func writeOffset(filePath string, offset int64) {
-	fmt.Printf("Committing offset %d to offset file...\n", offset)
-	content := fmt.Sprintf("%d", offset)
-	err := ioutil.WriteFile(filePath, []byte(content), 0644)
-	if err != nil {
-		log.Fatal(err)
-	}
 }
 
 func printDelivery(msg amqp.Delivery) {
