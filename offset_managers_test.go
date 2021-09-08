@@ -66,66 +66,59 @@ func Test_FileOffsetManager_GetOffset(t *testing.T) {
 
 func Test_RabbitOffsetManager_NewRabbitOffsetManager(t *testing.T) {
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672")
-	if err != nil {
-		t.Error(err)
-	}
-	_, err = NewRabbitOffsetManager(
+	assert.Nil(t, err, "shall not error during amqp connection creation")
+
+	rom, err := NewRabbitOffsetManager(
 		conn,
 		"test-consumer",
-		"test-forwarder-stream",
+		"test-forwarder-stream-new-offset-manager-test",
 	)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during NewRabbitOffsetManager")
+
+	err = rom.DeleteStream()
+	assert.Nil(t, err, "shall not error during stream deletion")
 }
 
 func Test_RabbitOffsetManager_GetOffset(t *testing.T) {
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during amqp connection creation")
+
 	rom, err := NewRabbitOffsetManager(
 		conn,
 		"test-consumer",
-		"test-forwarder-stream",
+		"test-forwarder-stream-get-offset-test",
 	)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during NewRabbitOffsetManager")
 
 	offset, err := rom.GetOffset()
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during RabbitOffsetManager.GetOffset()")
 
 	assert.Equal(t, int64(0), offset, "when offset stream does not previously exists it initializes a 0 offset message")
+	err = rom.DeleteStream()
+	assert.Nil(t, err, "shall not error during stream deletion")
 }
 
 func Test_RabbitOffsetManager_WriteOffset(t *testing.T) {
 	conn, err := amqp.Dial("amqp://guest:guest@localhost:5672")
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during amqp connection creation")
+
 	rom, err := NewRabbitOffsetManager(
 		conn,
 		"test-consumer",
-		"test-forwarder-stream",
+		"test-forwarder-stream-write-offset-test",
 	)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during NewRabbitOffsetManager")
 
 	expectedOffset := int64(100)
 
 	err = rom.WriteOffset(expectedOffset)
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during RabbitOffsetManager.WriteOffset()")
 
 	offset, err := rom.GetOffset()
-	if err != nil {
-		t.Error(err)
-	}
+	assert.Nil(t, err, "shall not error during RabbitOffsetManager.GetOffset()")
 
-	assert.Equal(t, int64(100), offset, "when offset stream does not previously exists it initializes a 0 offset message")
+	assert.Equal(t, expectedOffset, offset, "when offset manager has written an offset, get offset returns the correct offset")
+
+	err = rom.DeleteStream()
+	assert.Nil(t, err, "shall not error during stream deletion")
 }
