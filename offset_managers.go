@@ -75,7 +75,7 @@ func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, st
 	}
 
 	if q.Messages < 1 {
-		fmt.Println("Stream for offset management has no messages in it, initializing to 0")
+		log.Println("Stream for offset management has no messages in it, initializing to 0")
 		err := publishChan.Publish(
 			"rabbit-stream-forwarder", // exchange
 			offsetStreamName,          // routing key
@@ -198,7 +198,7 @@ func NewFileOffsetManager(filePath string) (FileOffsetManager, error) {
 // returns 0 and error.
 func (r FileOffsetManager) GetOffset() (int64, error) {
 	var offset int64
-	fmt.Println("Fetching offset file...")
+	log.Println("Fetching offset file...")
 	f, err := os.OpenFile(r.filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return offset, err

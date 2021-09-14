@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -15,6 +16,11 @@ func testAmqpConnection() (*amqp.Connection, error) {
 func TestForwarderBasicSetupAndTearDown(t *testing.T) {
 	withTestStreamTransaction(t, func(forwarder *Forwarder) {
 		go forwarder.Start(nil)
+		for {
+			if forwarder.running {
+				break
+			}
+		}
 		forwarder.Stop()
 	})
 }
@@ -127,7 +133,9 @@ func withTestStreamTransaction(t *testing.T, tx func(forwarder *Forwarder)) {
 	err = testCreateStream(pubConn, streamName, exchange)
 	assert.Nil(t, err, "shall not error during test stream creation")
 
+	ctx := context.Background()
 	forwarder, err := NewForwarder(
+		ctx,
 		subConn,
 		pubConn,
 		offsetManager,

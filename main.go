@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -41,7 +42,7 @@ func main() {
 		log.Fatal("Stream name must be specified! Shutting down..")
 	}
 
-	fmt.Println("Debug mode:", *debug)
+	log.Println("Debug mode:", *debug)
 
 	subConn, err := createAmqpConn(*amqpUri, *tlsCaFile, *tlsClientCertFile, *tlsClientKeyFile)
 	if err != nil {
@@ -53,7 +54,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer subConn.Close()
+	defer pubConn.Close()
 
 	switch *offsetManagerType {
 	case "rabbit":
@@ -78,7 +79,10 @@ func main() {
 		log.Fatal("Manage offset was specified without a valid offset-manager value")
 	}
 
+	ctx := context.Background()
+
 	forwarder, err := NewForwarder(
+		ctx,
 		subConn,
 		pubConn,
 		offsetManager,
@@ -104,6 +108,7 @@ func main() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 	<-c
+	log.Println("Cancel received and ending forwarder process...")
 }
 
 func deriveOffsetFromString(s string) (interface{}, error) {
