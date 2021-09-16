@@ -24,7 +24,8 @@ type OffsetManager interface {
 // to survive process restarts and resume from work had left off.
 type RabbitOffsetManager struct {
 	conn             *amqp.Connection
-	ch               *amqp.Channel
+	publishChan      *amqp.Channel
+	consumeChan      *amqp.Channel
 	consumerName     string
 	streamName       string
 	offsetStreamName string
@@ -33,15 +34,11 @@ type RabbitOffsetManager struct {
 // NewRabbitOffsetManager opens a channel to be used for offset management through a stream.
 func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, streamName string) (RabbitOffsetManager, error) {
 	offsetStreamName := fmt.Sprintf("rabbit-stream-forwarder.offset.tracking.%s.%s", consumerName, streamName)
-	ch, err := connection.Channel()
+	publishChan, err := connection.Channel()
 	if err != nil {
 		return RabbitOffsetManager{}, err
 	}
-	err = ch.Qos(1, 0, false)
-	if err != nil {
-		return RabbitOffsetManager{}, err
-	}
-	err = ch.ExchangeDeclare(
+	err = publishChan.ExchangeDeclare(
 		"rabbit-stream-forwarder",
 		"topic",
 		true,
@@ -54,7 +51,7 @@ func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, st
 		return RabbitOffsetManager{}, err
 	}
 
-	q, err := ch.QueueDeclare(
+	q, err := publishChan.QueueDeclare(
 		offsetStreamName,
 		true,
 		false,
@@ -66,7 +63,7 @@ func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, st
 		return RabbitOffsetManager{}, err
 	}
 
-	err = ch.QueueBind(
+	err = publishChan.QueueBind(
 		offsetStreamName,
 		offsetStreamName,
 		"rabbit-stream-forwarder",
@@ -78,8 +75,8 @@ func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, st
 	}
 
 	if q.Messages < 1 {
-		fmt.Println("Stream for offset management has no messages in it, initializing to 0")
-		err := ch.Publish(
+		log.Println("Stream for offset management has no messages in it, initializing to 0")
+		err := publishChan.Publish(
 			"rabbit-stream-forwarder", // exchange
 			offsetStreamName,          // routing key
 			false,                     // mandatory
@@ -92,15 +89,22 @@ func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, st
 		if err != nil {
 			return RabbitOffsetManager{}, err
 		}
-		fmt.Println("Successfully published message")
+		fmt.Printf("Successfully published initialization message of offset 0 to stream %s\n", offsetStreamName)
 	}
 	if err != nil {
 		return RabbitOffsetManager{}, err
 	}
 
+	consumeChan, err := connection.Channel()
+	if err != nil {
+		return RabbitOffsetManager{}, err
+	}
+	consumeChan.Qos(1, 0, false)
+
 	return RabbitOffsetManager{
 		conn:             connection,
-		ch:               ch,
+		publishChan:      publishChan,
+		consumeChan:      consumeChan,
 		consumerName:     consumerName,
 		streamName:       streamName,
 		offsetStreamName: offsetStreamName,
@@ -114,7 +118,7 @@ func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, st
 func (r RabbitOffsetManager) GetOffset() (int64, error) {
 	var foundOffset int64
 
-	msgs, err := r.ch.Consume(
+	msgs, err := r.consumeChan.Consume(
 		r.offsetStreamName,
 		"stream-forwarder",
 		false,
@@ -132,7 +136,7 @@ func (r RabbitOffsetManager) GetOffset() (int64, error) {
 	if err != nil {
 		return foundOffset, err
 	}
-	fmt.Println("Found offset from offset tracking stream " + string(msg.Body))
+	fmt.Printf("Found offset %s from offset tracking stream %s\n", string(msg.Body), r.offsetStreamName)
 
 	return foundOffset, nil
 }
@@ -141,7 +145,8 @@ func (r RabbitOffsetManager) GetOffset() (int64, error) {
 // message is then used to survive process restarts and resume where the last process left off.
 func (r RabbitOffsetManager) WriteOffset(offset int64) error {
 	fmt.Printf("Publishing offset %d to stream %s\n", offset, r.offsetStreamName)
-	return r.ch.Publish(
+	// Maybe need to publisher confirm this
+	return r.publishChan.Publish(
 		"rabbit-stream-forwarder", // exchange
 		r.offsetStreamName,        // routing key
 		false,                     // mandatory
@@ -151,6 +156,27 @@ func (r RabbitOffsetManager) WriteOffset(offset int64) error {
 			Body:        []byte(strconv.FormatInt(offset, 10)),
 		},
 	)
+}
+
+// DeleteStream is used mainly for testing (or whatever scenario it may be useful) to
+// remove the stream that stores offset.
+func (r RabbitOffsetManager) DeleteStream() error {
+	_, err := r.publishChan.QueueDelete(
+		r.offsetStreamName,
+		false,
+		false,
+		false,
+	)
+	if err != nil {
+		return err
+	}
+
+	err = r.publishChan.ExchangeDelete("rabbit-stream-forwarder", false, false)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // FileOffsetManager manages offset through a file on disk.
@@ -172,7 +198,7 @@ func NewFileOffsetManager(filePath string) (FileOffsetManager, error) {
 // returns 0 and error.
 func (r FileOffsetManager) GetOffset() (int64, error) {
 	var offset int64
-	fmt.Println("Fetching offset file...")
+	log.Println("Fetching offset file...")
 	f, err := os.OpenFile(r.filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return offset, err
