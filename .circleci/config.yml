@@ -1,0 +1,25 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/golang:1.17
+      - image: rabbitmq:3.9.5
+
+    working_directory: /go/src/github.com/mxenabled/rabbit-stream-forwarder
+    steps:
+      - checkout
+
+      # Wait for RabbitMQ to be up.
+      - run: wget https://github.com/jwilder/dockerize/releases/download/v0.3.0/dockerize-linux-amd64-v0.3.0.tar.gz && sudo tar -C /usr/local/bin -xzvf dockerize-linux-amd64-v0.3.0.tar.gz && rm dockerize-linux-amd64-v0.3.0.tar.gz
+      - run: dockerize -wait tcp://localhost:5672 -timeout 1m
+
+      # styles
+      - run: gofmt -s -d -l $(find . -type f -name '*.go' -not -path "./vendor/*" -not -path "./.git/*") >> style_changes.txt
+      - run: cat style_changes.txt
+      - run: cat style_changes.txt | read && exit 1 || true
+
+      # specify any bash command here prefixed with `run: `
+      - run: go build -v
+
+      # RabbitMQ takes a second to really start the service.
+      - run: go test -v ./...
