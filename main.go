@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cactus/go-statsd-client/v5/statsd"
 	"github.com/streadway/amqp"
 )
 
@@ -79,6 +80,22 @@ func main() {
 		log.Fatal("Manage offset was specified without a valid offset-manager value")
 	}
 
+	var st *statsdTracker
+	if *useStatsd {
+		if *statsdUri == "" {
+			log.Fatal("User specified to use statsd but received empty statd uri!")
+		}
+		config := &statsd.ClientConfig{
+			Address: *statsdUri,
+			Prefix:  "stream-forwarder",
+		}
+		s, err := statsd.NewClientWithConfig(config)
+		if err != nil {
+			log.Fatal(err)
+		}
+		st = NewStatsdTracker(s, *streamName)
+	}
+
 	ctx := context.Background()
 
 	forwarder, err := NewForwarder(
@@ -88,7 +105,7 @@ func main() {
 		offsetManager,
 		*streamName,
 		*exchange,
-		nil,
+		st,
 		*debug,
 	)
 	if err != nil {

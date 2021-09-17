@@ -29,8 +29,10 @@ type Forwarder struct {
 }
 
 // NewForwarder returns a new Forwarder.
-func NewForwarder(ctx context.Context, subConn *amqp.Connection, pubConn *amqp.Connection, offsetManager OffsetManager, streamName string, exchange string, statsdClient *statsdTracker, debug bool) (*Forwarder, error) {
+func NewForwarder(ctx context.Context, subConn *amqp.Connection, pubConn *amqp.Connection, offsetManager OffsetManager,
+	streamName string, exchange string, statTracker *statsdTracker, debug bool) (*Forwarder, error) {
 	ctx, cancelCtx := context.WithCancel(ctx)
+
 	return &Forwarder{
 		ctx:            ctx,
 		cancelCtx:      cancelCtx,
@@ -39,7 +41,7 @@ func NewForwarder(ctx context.Context, subConn *amqp.Connection, pubConn *amqp.C
 		offsetManager:  offsetManager,
 		streamName:     streamName,
 		exchange:       exchange,
-		statsdClient:   statsdClient,
+		statsdClient:   statTracker,
 		debug:          debug,
 		trackedOffset:  int64(0),
 		deliveryBuffer: make(chan amqp.Delivery, 100),
@@ -120,7 +122,8 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 		log.Fatal(err)
 	}
 	if f.statsdClient != nil {
-		f.statsdClient.Inc(f.trackedOffset)
+		f.statsdClient.Gauge(f.trackedOffset)
+		f.statsdClient.Close()
 	}
 
 	return nil
@@ -162,12 +165,15 @@ func (f *Forwarder) forwardDeliveries(ch *amqp.Channel) {
 			}
 			msgsSinceCommit += 1
 			if f.statsdClient != nil {
-				f.statsdClient.Inc(1)
+				f.statsdClient.Inc()
 			}
 			if msgsSinceCommit >= 1000 {
 				err := f.offsetManager.WriteOffset(f.trackedOffset)
 				if err != nil {
 					log.Fatal("Error writing offset: ", err)
+				}
+				if f.statsdClient != nil {
+					f.statsdClient.Gauge(f.trackedOffset)
 				}
 				msgsSinceCommit = 0
 			}
