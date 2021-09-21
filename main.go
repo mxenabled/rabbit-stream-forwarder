@@ -98,19 +98,18 @@ func main() {
 
 	ctx := context.Background()
 
-	forwarder, err := NewForwarder(
-		ctx,
-		subConn,
-		pubConn,
-		offsetManager,
-		*streamName,
-		*exchange,
-		st,
-		*debug,
+	forwarder := NewForwarder(
+		ForwarderConfig{
+			Ctx:           ctx,
+			SubConn:       subConn,
+			PubConn:       pubConn,
+			OffsetManager: offsetManager,
+			StreamName:    *streamName,
+			Exchange:      *exchange,
+			StatsdClient:  st,
+			Debug:         *debug,
+		},
 	)
-	if err != nil {
-		log.Fatal(err)
-	}
 	defer forwarder.Stop()
 
 	if *overrideOffset {

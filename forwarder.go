@@ -16,44 +16,44 @@ import (
 type Forwarder struct {
 	ctx            context.Context
 	cancelCtx      context.CancelFunc
-	subConn        *amqp.Connection
-	pubConn        *amqp.Connection
-	offsetManager  OffsetManager
-	streamName     string
-	exchange       string
-	statsdClient   *statsdTracker
-	debug          bool
+	cfg            ForwarderConfig
 	trackedOffset  int64
 	deliveryBuffer chan amqp.Delivery
 	running        bool
 }
 
+// ForwarderConfig provides a config type for the caller to utilize to assign
+// values needed for the process.
+type ForwarderConfig struct {
+	Ctx           context.Context
+	SubConn       *amqp.Connection
+	PubConn       *amqp.Connection
+	OffsetManager OffsetManager
+	StreamName    string
+	Exchange      string
+	StatsdClient  *statsdTracker
+	Debug         bool
+}
+
 // NewForwarder returns a new Forwarder.
-func NewForwarder(ctx context.Context, subConn *amqp.Connection, pubConn *amqp.Connection, offsetManager OffsetManager,
-	streamName string, exchange string, statTracker *statsdTracker, debug bool) (*Forwarder, error) {
-	ctx, cancelCtx := context.WithCancel(ctx)
+func NewForwarder(cfg ForwarderConfig) *Forwarder {
+	ctx, cancelCtx := context.WithCancel(cfg.Ctx)
 
 	return &Forwarder{
 		ctx:            ctx,
 		cancelCtx:      cancelCtx,
-		subConn:        subConn,
-		pubConn:        pubConn,
-		offsetManager:  offsetManager,
-		streamName:     streamName,
-		exchange:       exchange,
-		statsdClient:   statTracker,
-		debug:          debug,
+		cfg:            cfg,
 		trackedOffset:  int64(0),
 		deliveryBuffer: make(chan amqp.Delivery, 100),
 		running:        false,
-	}, nil
+	}
 }
 
 // Start begins the forwarding process.
 func (f *Forwarder) Start(manualOffset interface{}) error {
 	var evaluatedOffset interface{}
 
-	ch, err := f.subConn.Channel()
+	ch, err := f.cfg.SubConn.Channel()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 	if manualOffset != nil {
 		evaluatedOffset = manualOffset
 	} else {
-		evaluatedOffset, err = f.offsetManager.GetOffset()
+		evaluatedOffset, err = f.cfg.OffsetManager.GetOffset()
 		switch err {
 		case ErrFirstRunUserMustSpecifyOffset:
 			evaluatedOffset = "first"
@@ -77,11 +77,11 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 		}
 	}
 
-	log.Println(fmt.Sprintf("Consuming from stream %s and forwarding to exchange %s at offset %d\n", f.streamName, f.exchange, evaluatedOffset))
+	log.Println(fmt.Sprintf("Consuming from stream %s and forwarding to exchange %s at offset %d\n", f.cfg.StreamName, f.cfg.Exchange, evaluatedOffset))
 
 	randomInt := rand.Intn(99999)
 	msgs, err := ch.Consume(
-		f.streamName,
+		f.cfg.StreamName,
 		"stream-forwarder"+strconv.Itoa(randomInt),
 		false,
 		true,
@@ -93,7 +93,7 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 		log.Fatal(err)
 	}
 
-	publishCh, err := f.pubConn.Channel()
+	publishCh, err := f.cfg.PubConn.Channel()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 	// If we panic for any reason, we need to make sure we still commit offset
 	defer func() {
 		if r := recover(); r != nil {
-			f.offsetManager.WriteOffset(f.trackedOffset)
+			f.cfg.OffsetManager.WriteOffset(f.trackedOffset)
 			log.Println(err)
 		}
 	}()
@@ -117,13 +117,13 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 
 	f.running = true
 	<-f.ctx.Done()
-	err = f.offsetManager.WriteOffset(f.trackedOffset)
+	err = f.cfg.OffsetManager.WriteOffset(f.trackedOffset)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if f.statsdClient != nil {
-		f.statsdClient.Gauge(f.trackedOffset)
-		f.statsdClient.Close()
+	if f.cfg.StatsdClient != nil {
+		f.cfg.StatsdClient.Gauge(f.trackedOffset)
+		f.cfg.StatsdClient.Close()
 	}
 
 	return nil
@@ -136,7 +136,7 @@ func (f *Forwarder) receiveDeliveries(msgs <-chan amqp.Delivery) {
 			log.Println("Context cancel received, stopping receiveDeliveries worker.")
 			return
 		case msg := <-msgs:
-			if f.debug {
+			if f.cfg.Debug {
 				printDelivery(msg)
 			}
 			f.deliveryBuffer <- msg
@@ -159,21 +159,21 @@ func (f *Forwarder) forwardDeliveries(ch *amqp.Channel) {
 			log.Println("Context cancel received, stopping forwardDeliveries worker.")
 			return
 		case msg := <-f.deliveryBuffer:
-			err := forwardDelivery(ch, msg, f.exchange, f.debug)
+			err := forwardDelivery(ch, msg, f.cfg.Exchange, f.cfg.Debug)
 			if err != nil {
 				log.Println("Error forwradding delivery:", err.Error())
 			}
 			msgsSinceCommit += 1
-			if f.statsdClient != nil {
-				f.statsdClient.Inc()
+			if f.cfg.StatsdClient != nil {
+				f.cfg.StatsdClient.Inc()
 			}
 			if msgsSinceCommit >= 1000 {
-				err := f.offsetManager.WriteOffset(f.trackedOffset)
+				err := f.cfg.OffsetManager.WriteOffset(f.trackedOffset)
 				if err != nil {
 					log.Fatal("Error writing offset: ", err)
 				}
-				if f.statsdClient != nil {
-					f.statsdClient.Gauge(f.trackedOffset)
+				if f.cfg.StatsdClient != nil {
+					f.cfg.StatsdClient.Gauge(f.trackedOffset)
 				}
 				msgsSinceCommit = 0
 			}

@@ -134,17 +134,18 @@ func withTestStreamTransaction(t *testing.T, tx func(forwarder *Forwarder)) {
 	assert.Nil(t, err, "shall not error during test stream creation")
 
 	ctx := context.Background()
-	forwarder, err := NewForwarder(
-		ctx,
-		subConn,
-		pubConn,
-		offsetManager,
-		streamName,
-		exchange,
-		nil,
-		false,
+	forwarder := NewForwarder(
+		ForwarderConfig{
+			Ctx:           ctx,
+			SubConn:       subConn,
+			PubConn:       pubConn,
+			OffsetManager: offsetManager,
+			StreamName:    streamName,
+			Exchange:      exchange,
+			StatsdClient:  nil,
+			Debug:         false,
+		},
 	)
-	assert.Nil(t, err, "shall not error during creation with NewForwarder")
 
 	// Execute transactional test.
 	tx(forwarder)
