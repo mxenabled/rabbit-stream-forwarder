@@ -134,7 +134,7 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 
 func (f *Forwarder) receiveDeliveries(msgs <-chan amqp.Delivery) {
 	f.wg.Add(1)
-	f.wg.Done()
+	defer f.wg.Done()
 	for {
 		select {
 		case <-f.ctx.Done():
