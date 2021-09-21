@@ -123,7 +123,6 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 	}
 	if f.cfg.StatsdClient != nil {
 		f.cfg.StatsdClient.Gauge(f.trackedOffset)
-		f.cfg.StatsdClient.Close()
 	}
 
 	return nil
