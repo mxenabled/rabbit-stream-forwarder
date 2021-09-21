@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"strconv"
+	"sync"
 
 	"github.com/streadway/amqp"
 )
@@ -20,6 +21,7 @@ type Forwarder struct {
 	trackedOffset  int64
 	deliveryBuffer chan amqp.Delivery
 	running        bool
+	wg             sync.WaitGroup
 }
 
 // ForwarderConfig provides a config type for the caller to utilize to assign
@@ -117,6 +119,7 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 
 	f.running = true
 	<-f.ctx.Done()
+	f.wg.Add(1)
 	err = f.cfg.OffsetManager.WriteOffset(f.trackedOffset)
 	if err != nil {
 		log.Fatal(err)
@@ -124,11 +127,14 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 	if f.cfg.StatsdClient != nil {
 		f.cfg.StatsdClient.Gauge(f.trackedOffset)
 	}
+	f.wg.Done()
 
 	return nil
 }
 
 func (f *Forwarder) receiveDeliveries(msgs <-chan amqp.Delivery) {
+	f.wg.Add(1)
+	f.wg.Done()
 	for {
 		select {
 		case <-f.ctx.Done():
@@ -151,6 +157,8 @@ func (f *Forwarder) receiveDeliveries(msgs <-chan amqp.Delivery) {
 
 func (f *Forwarder) forwardDeliveries(ch *amqp.Channel) {
 	var msgsSinceCommit int
+	f.wg.Add(1)
+	defer f.wg.Done()
 	log.Println("Starting publishing worker..")
 	for {
 		select {
@@ -183,4 +191,5 @@ func (f *Forwarder) forwardDeliveries(ch *amqp.Channel) {
 // Stop sends cancellation in context to stop forwarder routines.
 func (f *Forwarder) Stop() {
 	f.cancelCtx()
+	f.wg.Wait()
 }

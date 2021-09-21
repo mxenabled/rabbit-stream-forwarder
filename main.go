@@ -9,7 +9,6 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cactus/go-statsd-client/v5/statsd"
 	"github.com/streadway/amqp"
@@ -112,6 +111,7 @@ func main() {
 			Debug:         *debug,
 		},
 	)
+	defer forwarder.Stop()
 
 	if *overrideOffset {
 		o, err := deriveOffsetFromString(*offset)
@@ -126,8 +126,6 @@ func main() {
 	signal.Notify(c, os.Interrupt)
 	<-c
 	log.Println("Cancel received and ending forwarder process...")
-	forwarder.Stop()
-	time.Sleep(time.Millisecond * 250)
 }
 
 func deriveOffsetFromString(s string) (interface{}, error) {
