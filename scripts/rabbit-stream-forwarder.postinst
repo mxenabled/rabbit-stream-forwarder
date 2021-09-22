@@ -1,0 +1,12 @@
+#!/bin/sh
+
+set -e
+
+addgroup --system --quiet rabbit-stream-forwarder
+
+adduser --system --disabled-password --disabled-login --home /var/lib/rabbit-stream-forwarder \
+        --no-create-home --quiet --group rabbit-stream-forwarder
+
+mkdir -p /etc/rabbit-stream-forwarder
+
+chown rabbit-stream-forwarder:rabbit-stream-forwarder -R /etc/rabbit-stream-forwarder

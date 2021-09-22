@@ -1,0 +1,22 @@
+[Unit]
+Description=Rabbit Stream Forwarder
+
+[Service]
+Type=simple
+User=rabbit-stream-forwarder
+Group=rabbit-stream-forwarder
+# Load env vars from /etc/default/ and /etc/sysconfig/ if they exist.
+# Prefixing the path with '-' makes it try to load, but if the file doesn't
+# exist, it continues onward.
+EnvironmentFile=-/etc/default/rabbit-stream-forwarder
+EnvironmentFile=-/etc/sysconfig/rabbit-stream-forwarder
+ExecStart=/usr/local/bin/rabbit-stream-forwarder
+Restart=always
+WorkingDirectory=/
+
+# When stopping, how long to wait before giving up and sending SIGKILL?
+# Keep in mind that SIGKILL on a process can cause data loss.
+TimeoutStopSec=infinity
+
+[Install]
+WantedBy=multi-user.target
