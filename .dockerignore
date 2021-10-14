@@ -1,0 +1,7 @@
+# ignore everything so we can whitelist
+*
+
+# whitelist
+!**/*.go
+!go.*
+!docker-entrypoint.sh
