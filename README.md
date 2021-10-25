@@ -12,3 +12,32 @@ for a variety of reasons.  With this, it is possible to increase publishing thro
 ```
 go build && ./rabbit-stream-forwarder --help
 ```
+
+## Docker
+
+### Build
+```
+docker build . -t rabbit-stream-forwarder
+```
+
+### Running
+
+#### Environmental Variables
+
+|Var|default|description|
+|---|---|---|
+|AMQP_URI|amqp://guest:guest@localhost:5672|URI to connect to|
+|STREAM_NAME||Stream name to forward|
+|CONSUMER_NAME|rabbit-stream-forwarder|name to use on consuming functions in rabbit|
+|EXCHANGE|events|name of exchange to forward messages to|
+|OVERRIDE_OFFSET|false||
+|OFFSET|last||
+|OFFSET_MANAGER_TYPE|rabbit||
+|OFFSET_FILE_PATH|/tmp/rabbit-stream-forwarder-offset||
+|DEBUG|false||
+|TLS_CA_FILE||client ca file path|
+|TLS_CLIENT_CERT_FILE||client certificate file path|
+|TLS_CLIENT_KEY_FILE||client key file path
+|USE_STATSD|true||
+|STATSD_URI|127.0.0.1:8125||
+
