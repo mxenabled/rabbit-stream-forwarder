@@ -33,7 +33,7 @@ type RabbitOffsetManager struct {
 
 // NewRabbitOffsetManager opens a channel to be used for offset management through a stream.
 func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, streamName string) (RabbitOffsetManager, error) {
-	offsetStreamName := fmt.Sprintf("rabbit-stream-forwarder.offset.tracking.%s.%s", consumerName, streamName)
+	offsetStreamName := fmt.Sprintf("offset.tracking.%s.%s", consumerName, streamName)
 	publishChan, err := connection.Channel()
 	if err != nil {
 		return RabbitOffsetManager{}, err
@@ -117,12 +117,11 @@ func NewRabbitOffsetManager(connection *amqp.Connection, consumerName string, st
 // will retrieve the last message and parses the bytes to an int64 value.
 func (r RabbitOffsetManager) GetOffset() (int64, error) {
 	var foundOffset int64
-
 	msgs, err := r.consumeChan.Consume(
 		r.offsetStreamName,
 		"stream-forwarder",
 		false,
-		true,
+		false,
 		false,
 		false,
 		amqp.Table{"x-stream-offset": "last"},
@@ -136,7 +135,8 @@ func (r RabbitOffsetManager) GetOffset() (int64, error) {
 	if err != nil {
 		return foundOffset, err
 	}
-	fmt.Printf("Found offset %s from offset tracking stream %s\n", string(msg.Body), r.offsetStreamName)
+	// Offset committed is the last message received and processed, don't duplicate.
+	fmt.Printf("Found offset %d from offset tracking stream %s\n", foundOffset, r.offsetStreamName)
 
 	return foundOffset, nil
 }

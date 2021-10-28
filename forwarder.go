@@ -55,15 +55,25 @@ func NewForwarder(cfg ForwarderConfig) *Forwarder {
 func (f *Forwarder) Start(manualOffset interface{}) error {
 	var evaluatedOffset interface{}
 
-	ch, err := f.cfg.SubConn.Channel()
+	consumeChan, err := f.cfg.SubConn.Channel()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer ch.Close()
+	defer consumeChan.Close()
 
-	err = ch.Qos(1, 0, false)
+	err = consumeChan.Qos(1, 0, false)
 	if err != nil {
 		return err
+	}
+
+	err = f.declareExchange(consumeChan)
+	if err != nil {
+		log.Fatal("Failed declaring exchange:", err)
+	}
+
+	err = f.declareStreamAndBind(consumeChan)
+	if err != nil {
+		log.Fatal("Failed declaring stream:", err)
 	}
 
 	if manualOffset != nil {
@@ -82,7 +92,7 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 	log.Println(fmt.Sprintf("Consuming from stream %s and forwarding to exchange %s at offset %d\n", f.cfg.StreamName, f.cfg.Exchange, evaluatedOffset))
 
 	randomInt := rand.Intn(99999)
-	msgs, err := ch.Consume(
+	msgs, err := consumeChan.Consume(
 		f.cfg.StreamName,
 		"stream-forwarder"+strconv.Itoa(randomInt),
 		false,
@@ -109,13 +119,8 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 		}
 	}()
 
-	go func() {
-		f.receiveDeliveries(msgs)
-	}()
-
-	go func() {
-		f.forwardDeliveries(publishCh)
-	}()
+	go f.receiveDeliveries(msgs)
+	go f.forwardDeliveries(publishCh)
 
 	f.running = true
 	<-f.ctx.Done()
@@ -130,6 +135,44 @@ func (f *Forwarder) Start(manualOffset interface{}) error {
 	f.wg.Done()
 
 	return nil
+}
+
+func (f *Forwarder) declareExchange(ch *amqp.Channel) error {
+	return ch.ExchangeDeclare(
+		f.cfg.Exchange+".ingest",
+		"topic",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+}
+
+func (f *Forwarder) declareStreamAndBind(ch *amqp.Channel) error {
+	_, err := ch.QueueDeclare(
+		f.cfg.StreamName,
+		true,
+		false,
+		false,
+		false,
+		amqp.Table{"x-queue-type": "stream"},
+	)
+	if err != nil {
+		return err
+	}
+
+	return ch.QueueBind(
+		f.cfg.StreamName,
+		"#",
+		f.sourceExchange(),
+		false,
+		nil,
+	)
+}
+
+func (f *Forwarder) sourceExchange() string {
+	return f.cfg.Exchange + ".ingest"
 }
 
 func (f *Forwarder) receiveDeliveries(msgs <-chan amqp.Delivery) {
@@ -154,7 +197,6 @@ func (f *Forwarder) receiveDeliveries(msgs <-chan amqp.Delivery) {
 		}
 	}
 }
-
 func (f *Forwarder) forwardDeliveries(ch *amqp.Channel) {
 	var msgsSinceCommit int
 	f.wg.Add(1)

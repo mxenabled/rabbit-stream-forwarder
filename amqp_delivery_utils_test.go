@@ -8,7 +8,7 @@ import (
 )
 
 func Test_extractOffset(t *testing.T) {
-	test_cases := []struct {
+	testCases := []struct {
 		description string
 		input       amqp.Delivery
 		expectation int64
@@ -34,7 +34,7 @@ func Test_extractOffset(t *testing.T) {
 		},
 	}
 
-	for _, tc := range test_cases {
+	for _, tc := range testCases {
 		result, err := extractOffset(tc.input)
 		if tc.shouldError {
 			assert.NotNil(t, err, tc.description)
@@ -44,7 +44,7 @@ func Test_extractOffset(t *testing.T) {
 }
 
 func Test_convertDeliveryToPublishing(t *testing.T) {
-	test_cases := []struct {
+	testCases := []struct {
 		description string
 		msg         amqp.Delivery
 		expected    amqp.Publishing
@@ -68,7 +68,7 @@ func Test_convertDeliveryToPublishing(t *testing.T) {
 		},
 	}
 
-	for _, tc := range test_cases {
+	for _, tc := range testCases {
 		result := convertDeliveryToPublishing(tc.msg)
 		assert.Equal(t, tc.expected, result, tc.description)
 	}

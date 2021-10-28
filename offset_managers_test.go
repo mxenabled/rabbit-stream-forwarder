@@ -11,7 +11,7 @@ import (
 
 func Test_FileOffsetManager_GetOffset(t *testing.T) {
 	flag.Parse()
-	test_cases := []struct {
+	testCases := []struct {
 		description  string
 		fileExists   bool
 		fileValue    []byte
@@ -42,7 +42,7 @@ func Test_FileOffsetManager_GetOffset(t *testing.T) {
 	}
 
 	fileName := "/tmp/rabbit-stream-forwarder-test"
-	for _, tc := range test_cases {
+	for _, tc := range testCases {
 		if tc.fileExists {
 			err := ioutil.WriteFile(fileName, tc.fileValue, 0644)
 			assert.Nil(t, err)
@@ -110,7 +110,7 @@ func Test_RabbitOffsetManager_WriteOffset(t *testing.T) {
 
 	expectedOffset := int64(100)
 
-	err = rom.WriteOffset(expectedOffset)
+	err = rom.WriteOffset(int64(100))
 	assert.Nil(t, err, "shall not error during RabbitOffsetManager.WriteOffset()")
 
 	offset, err := rom.GetOffset()
